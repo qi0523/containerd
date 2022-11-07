@@ -38,5 +38,8 @@ import (
 	_ "github.com/containerd/containerd/services/sandbox"
 	_ "github.com/containerd/containerd/services/snapshots"
 	_ "github.com/containerd/containerd/services/tasks"
+
+	// TODO#
+	_ "github.com/containerd/containerd/services/tmpimages"
 	_ "github.com/containerd/containerd/services/version"
 )

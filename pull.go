@@ -28,6 +28,7 @@ import (
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/schema1" //nolint:staticcheck // Ignore SA1019. Need to keep deprecated package for compatibility.
+	"github.com/containerd/containerd/tmpimages"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/semaphore"
 )
@@ -119,6 +120,7 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 
 	img, err := c.fetch(ctx, pullCtx, ref, 1)
 	if err != nil {
+		c.TmpImageService().Delete(ctx, tmpImageName(ref))
 		return nil, err
 	}
 
@@ -128,11 +130,13 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 	var ur unpack.Result
 	if unpacker != nil {
 		if ur, err = unpacker.Wait(); err != nil {
+			c.TmpImageService().Delete(ctx, tmpImageName(ref))
 			return nil, err
 		}
 	}
 
 	img, err = c.createNewImage(ctx, img)
+	c.TmpImageService().Delete(ctx, tmpImageName(ref))
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +160,13 @@ func (c *Client) fetch(ctx context.Context, rCtx *RemoteContext, ref string, lim
 	if err != nil {
 		return images.Image{}, fmt.Errorf("failed to resolve reference %q: %w", ref, err)
 	}
-
+	_, err = c.TmpImageService().InsertTmpImage(ctx, tmpimages.TmpImage{
+		Name:   tmpImageName(name),
+		Target: desc,
+	})
+	if err != nil && !errdefs.IsAlreadyExists(err) {
+		return images.Image{}, err
+	}
 	fetcher, err := rCtx.Resolver.Fetcher(ctx, name)
 	if err != nil {
 		return images.Image{}, fmt.Errorf("failed to get fetcher for %q: %w", name, err)

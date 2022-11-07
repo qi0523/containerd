@@ -36,11 +36,13 @@ import (
 	srv "github.com/containerd/containerd/services"
 	"github.com/containerd/containerd/services/introspection"
 	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/tmpimages"
 )
 
 type services struct {
 	contentStore         content.Store
 	imageStore           images.Store
+	tmpimageStore        tmpimages.Store
 	containerStore       containers.Store
 	namespaceStore       namespaces.Store
 	snapshotters         map[string]snapshots.Snapshotter

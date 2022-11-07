@@ -38,6 +38,7 @@ import (
 	sandboxsapi "github.com/containerd/containerd/api/services/sandbox/v1"
 	snapshotsapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/api/services/tasks/v1"
+	tmpimagesapi "github.com/containerd/containerd/api/services/tmpimages/v1"
 	versionservice "github.com/containerd/containerd/api/services/version/v1"
 	apitypes "github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/containers"
@@ -60,6 +61,7 @@ import (
 	"github.com/containerd/containerd/services/introspection"
 	"github.com/containerd/containerd/snapshots"
 	snproxy "github.com/containerd/containerd/snapshots/proxy"
+	"github.com/containerd/containerd/tmpimages"
 	"github.com/containerd/typeurl"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -648,6 +650,25 @@ func (c *Client) ImageService() images.Store {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	return NewImageStoreFromClient(imagesapi.NewImagesClient(c.conn))
+}
+
+// TmpImageService return underlying tmpimage Store
+func (c *Client) TmpImageService() tmpimages.Store {
+	if c.tmpimageStore != nil {
+		return c.tmpimageStore
+	}
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return NewTmpImageStoreFromClient(tmpimagesapi.NewTmpImagesClient(c.conn))
+}
+
+// GetTmpImage returns an existing tmpimage
+func (c *Client) GetTmpImage(ctx context.Context, ref string) (*tmpimages.TmpImage, error) {
+	i, err := c.TmpImageService().GetTmpImage(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return &i, nil
 }
 
 // DiffService returns the underlying Differ

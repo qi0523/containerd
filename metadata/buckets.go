@@ -132,6 +132,7 @@ var (
 	bucketKeyDBVersion        = []byte("version")    // stores the version of the schema
 	bucketKeyObjectLabels     = []byte("labels")     // stores the labels for a namespace.
 	bucketKeyObjectImages     = []byte("images")     // stores image objects
+	bucketKeyObjectTmpImages  = []byte("tmpimages")  // stores tmpimages objects
 	bucketKeyObjectContainers = []byte("containers") // stores container objects
 	bucketKeyObjectSnapshots  = []byte("snapshots")  // stores snapshot references
 	bucketKeyObjectContent    = []byte("content")    // stores content references
@@ -218,6 +219,18 @@ func createImagesBucket(tx *bolt.Tx, namespace string) (*bolt.Bucket, error) {
 }
 
 func getImagesBucket(tx *bolt.Tx, namespace string) *bolt.Bucket {
+	return getBucket(tx, imagesBucketPath(namespace)...)
+}
+
+func tmpImagesBucketPath(namespace string) [][]byte {
+	return [][]byte{bucketKeyVersion, []byte(namespace), bucketKeyObjectTmpImages}
+}
+
+func createTmpImagesBucket(tx *bolt.Tx, namespace string) (*bolt.Bucket, error) {
+	return createBucketIfNotExists(tx, tmpImagesBucketPath(namespace)...)
+}
+
+func getTmpImagesBucket(tx *bolt.Tx, namespace string) *bolt.Bucket {
 	return getBucket(tx, imagesBucketPath(namespace)...)
 }
 
