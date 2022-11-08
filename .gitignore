@@ -9,3 +9,4 @@ releases/*.tar.gz.sha256sum
 _output/
 .vagrant/
 /.vscode
+/cmd/containerd/*debug*

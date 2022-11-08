@@ -136,7 +136,11 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 	}
 
 	img, err = c.createNewImage(ctx, img)
-	c.TmpImageService().Delete(ctx, tmpImageName(ref))
+	if err != nil {
+		c.TmpImageService().Delete(ctx, tmpImageName(ref))
+		return nil, err
+	}
+	err = c.TmpImageService().Delete(ctx, tmpImageName(ref))
 	if err != nil {
 		return nil, err
 	}

@@ -231,7 +231,7 @@ func createTmpImagesBucket(tx *bolt.Tx, namespace string) (*bolt.Bucket, error) 
 }
 
 func getTmpImagesBucket(tx *bolt.Tx, namespace string) *bolt.Bucket {
-	return getBucket(tx, imagesBucketPath(namespace)...)
+	return getBucket(tx, tmpImagesBucketPath(namespace)...)
 }
 
 func createContainersBucket(tx *bolt.Tx, namespace string) (*bolt.Bucket, error) {
