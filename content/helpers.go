@@ -359,6 +359,9 @@ func copyNWithBuffer(dst io.Writer, src io.Reader, n int64) (written int64, err 
 				break
 			}
 		}
+		if written == n {
+			break
+		}
 		if er != nil {
 			// If an EOF happens after reading fewer than the requested bytes,
 			// ReadAtLeast returns ErrUnexpectedEOF.
