@@ -144,24 +144,7 @@ func fetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc
 	}
 	defer rc.Close()
 
-	for i := 0; i < 5; i++ {
-		if i >= 1 {
-			log.G(ctx).WithField("digest", desc.Digest).Debugf("retrying copy due to unexpected EOF")
-			rc, err = fetcher.Fetch(ctx, desc)
-			if err != nil {
-				return err
-			}
-		}
-		err = content.Copy(ctx, cw, rc, desc.Size, desc.Digest)
-		if err != nil && errors.Is(err, io.ErrUnexpectedEOF) {
-			continue
-		}
-		if err == nil {
-			break
-		}
-	}
-
-	return err
+	return content.Copy(ctx, cw, rc, desc.Size, desc.Digest)
 }
 
 // PushHandler returns a handler that will push all content from the provider

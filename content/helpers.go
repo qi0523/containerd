@@ -160,7 +160,7 @@ func Copy(ctx context.Context, cw Writer, or io.Reader, size int64, expected dig
 		if i >= 1 {
 			log.G(ctx).WithField("digest", expected).Debugf("retrying copy due to reset")
 		}
-		copied, err := copyWithBuffer(cw, r)
+		copied, err := copyNWithBuffer(cw, r, size-ws.Offset)
 		if errors.Is(err, ErrReset) {
 			ws, err := cw.Status()
 			if err != nil {
@@ -324,6 +324,49 @@ func copyWithBuffer(dst io.Writer, src io.Reader) (written int64, err error) {
 				err = er
 			}
 			break
+		}
+	}
+	return
+}
+
+// copyNWithBuffer need to copy N bytes
+func copyNWithBuffer(dst io.Writer, src io.Reader, n int64) (written int64, err error) {
+	// If the reader has a WriteTo method, use it to do the copy.
+	// Avoids an allocation and a copy.
+	if wt, ok := src.(io.WriterTo); ok {
+		return wt.WriteTo(dst)
+	}
+	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
+	if rt, ok := dst.(io.ReaderFrom); ok {
+		return rt.ReadFrom(src)
+	}
+	bufRef := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bufRef)
+	buf := *bufRef
+	for {
+		nr, er := io.ReadAtLeast(src, buf, len(buf))
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			// If an EOF happens after reading fewer than the requested bytes,
+			// ReadAtLeast returns ErrUnexpectedEOF.
+			if er != io.EOF && er != io.ErrUnexpectedEOF {
+				err = er
+				break
+			}
+			time.Sleep(time.Nanosecond * time.Duration(int64(1000000000*(n-written)/n)))
 		}
 	}
 	return
