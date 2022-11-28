@@ -369,7 +369,6 @@ func copyNWithBuffer(dst io.Writer, src io.Reader, n int64) (written int64, err 
 				err = er
 				break
 			}
-			time.Sleep(time.Nanosecond * time.Duration(int64(1000000000*(n-written)/n)))
 		}
 	}
 	return
