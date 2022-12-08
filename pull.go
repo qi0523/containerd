@@ -23,6 +23,7 @@ import (
 
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/pkg/unpack"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/remotes"
@@ -137,12 +138,19 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 
 	img, err = c.createNewImage(ctx, img)
 	if err != nil {
-		c.TmpImageService().Delete(ctx, tmpImageName(ref))
 		return nil, err
 	}
-	err = c.TmpImageService().Delete(ctx, tmpImageName(ref))
-	if err != nil {
+
+	ns, err := namespaces.NamespaceRequired(ctx)
+
+	if err != nil && ns == "default" {
 		return nil, err
+	}
+
+	if ns == "default" {
+		if err = c.TmpImageService().Delete(ctx, tmpImageName(ref)); err != nil {
+			return nil, err
+		}
 	}
 
 	i := NewImageWithPlatform(c, img, pullCtx.PlatformMatcher)
@@ -164,12 +172,18 @@ func (c *Client) fetch(ctx context.Context, rCtx *RemoteContext, ref string, lim
 	if err != nil {
 		return images.Image{}, fmt.Errorf("failed to resolve reference %q: %w", ref, err)
 	}
-	_, err = c.TmpImageService().InsertTmpImage(ctx, tmpimages.TmpImage{
-		Name:   tmpImageName(name),
-		Target: desc,
-	})
-	if err != nil && !errdefs.IsAlreadyExists(err) {
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
 		return images.Image{}, err
+	}
+	if ns == "default" {
+		_, err = c.TmpImageService().InsertTmpImage(ctx, tmpimages.TmpImage{
+			Name:   tmpImageName(name),
+			Target: desc,
+		})
+		if err != nil && !errdefs.IsAlreadyExists(err) {
+			return images.Image{}, err
+		}
 	}
 	fetcher, err := rCtx.Resolver.Fetcher(ctx, name)
 	if err != nil {
