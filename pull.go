@@ -120,8 +120,11 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 	}
 
 	img, err := c.fetch(ctx, pullCtx, ref, 1)
+	ns, _ := namespaces.NamespaceRequired(ctx)
 	if err != nil {
-		c.TmpImageService().Delete(ctx, tmpImageName(ref))
+		if ns == "default" {
+			c.TmpImageService().Delete(ctx, tmpImageName(ref))
+		}
 		return nil, err
 	}
 
@@ -131,26 +134,23 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 	var ur unpack.Result
 	if unpacker != nil {
 		if ur, err = unpacker.Wait(); err != nil {
-			c.TmpImageService().Delete(ctx, tmpImageName(ref))
+			if ns == "default" {
+				c.TmpImageService().Delete(ctx, tmpImageName(ref))
+			}
 			return nil, err
 		}
 	}
 
 	img, err = c.createNewImage(ctx, img)
 	if err != nil {
-		return nil, err
-	}
-
-	ns, err := namespaces.NamespaceRequired(ctx)
-
-	if err != nil && ns == "default" {
+		if ns == "default" {
+			c.TmpImageService().Delete(ctx, tmpImageName(ref))
+		}
 		return nil, err
 	}
 
 	if ns == "default" {
-		if err = c.TmpImageService().Delete(ctx, tmpImageName(ref)); err != nil {
-			return nil, err
-		}
+		c.TmpImageService().Delete(ctx, tmpImageName(ref))
 	}
 
 	i := NewImageWithPlatform(c, img, pullCtx.PlatformMatcher)
