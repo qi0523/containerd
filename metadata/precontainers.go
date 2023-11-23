@@ -19,35 +19,42 @@ package metadata
 import (
 	"context"
 	"fmt"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/filters"
 	"github.com/containerd/containerd/identifiers"
 	"github.com/containerd/containerd/labels"
 	"github.com/containerd/containerd/metadata/boltutil"
 	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/precontainers"
 	"github.com/containerd/containerd/protobuf/proto"
 	"github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/typeurl"
 	bolt "go.etcd.io/bbolt"
 )
 
-type containerStore struct {
-	db *DB
+type precontainerStore struct {
+	db    *DB
+	mutex sync.Mutex
+	cache map[string][]string
 }
 
 // NewContainerStore returns a Store backed by an underlying bolt DB
-func NewContainerStore(db *DB) containers.Store {
-	return &containerStore{
-		db: db,
+func NewPreContainerStore(db *DB) precontainers.Store {
+	return &precontainerStore{
+		db:    db,
+		cache: make(map[string][]string),
 	}
 }
 
-func (s *containerStore) Get(ctx context.Context, id string) (containers.Container, error) {
+func (s *precontainerStore) Get(ctx context.Context, function string) (containers.Container, error) {
+	id := s.getByFuncName(function)
+
+	if id == "" {
+		return containers.Container{}, fmt.Errorf("no free preload containers")
+	}
 	namespace, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return containers.Container{}, err
@@ -73,49 +80,7 @@ func (s *containerStore) Get(ctx context.Context, id string) (containers.Contain
 	return container, nil
 }
 
-func (s *containerStore) List(ctx context.Context, fs ...string) ([]containers.Container, error) {
-	namespace, err := namespaces.NamespaceRequired(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	filter, err := filters.ParseAll(fs...)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", err.Error(), errdefs.ErrInvalidArgument)
-	}
-
-	var m []containers.Container
-
-	if err := view(ctx, s.db, func(tx *bolt.Tx) error {
-		bkt := getContainersBucket(tx, namespace)
-		if bkt == nil {
-			return nil // empty store
-		}
-
-		return bkt.ForEach(func(k, v []byte) error {
-			cbkt := bkt.Bucket(k)
-			if cbkt == nil {
-				return nil
-			}
-			container := containers.Container{ID: string(k)}
-
-			if err := readContainer(&container, cbkt); err != nil {
-				return fmt.Errorf("failed to read container %q: %w", string(k), err)
-			}
-
-			if filter.Match(adaptContainer(container)) {
-				m = append(m, container)
-			}
-			return nil
-		})
-	}); err != nil {
-		return nil, err
-	}
-
-	return m, nil
-}
-
-func (s *containerStore) Create(ctx context.Context, container containers.Container) (containers.Container, error) {
+func (s *precontainerStore) Preload(ctx context.Context, container containers.Container) (containers.Container, error) {
 	namespace, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return containers.Container{}, err
@@ -150,113 +115,17 @@ func (s *containerStore) Create(ctx context.Context, container containers.Contai
 		return containers.Container{}, err
 	}
 
+	// preload初始化
+	flag := s.preload(container)
+	if !flag {
+		return containers.Container{}, fmt.Errorf("precontainer id exists")
+	}
+
 	return container, nil
 }
 
-func (s *containerStore) Update(ctx context.Context, container containers.Container, fieldpaths ...string) (containers.Container, error) {
-	if _, ok := container.Labels["func-name"]; ok {
-		return s.preloadUpdate(ctx, container)
-	}
-	namespace, err := namespaces.NamespaceRequired(ctx)
-	if err != nil {
-		return containers.Container{}, err
-	}
-
-	if container.ID == "" {
-		return containers.Container{}, fmt.Errorf("must specify a container id: %w", errdefs.ErrInvalidArgument)
-	}
-
-	var updated containers.Container
-	if err := update(ctx, s.db, func(tx *bolt.Tx) error {
-		bkt := getContainersBucket(tx, namespace)
-		if bkt == nil {
-			return fmt.Errorf("cannot update container %q in namespace %q: %w", container.ID, namespace, errdefs.ErrNotFound)
-		}
-
-		cbkt := bkt.Bucket([]byte(container.ID))
-		if cbkt == nil {
-			return fmt.Errorf("container %q: %w", container.ID, errdefs.ErrNotFound)
-		}
-
-		if err := readContainer(&updated, cbkt); err != nil {
-			return fmt.Errorf("failed to read container %q: %w", container.ID, err)
-		}
-		createdat := updated.CreatedAt
-		updated.ID = container.ID
-
-		if len(fieldpaths) == 0 {
-			// only allow updates to these field on full replace.
-			fieldpaths = []string{"labels", "spec", "extensions", "image", "snapshotkey"}
-
-			// Fields that are immutable must cause an error when no field paths
-			// are provided. This allows these fields to become mutable in the
-			// future.
-			if updated.Snapshotter != container.Snapshotter {
-				return fmt.Errorf("container.Snapshotter field is immutable: %w", errdefs.ErrInvalidArgument)
-			}
-
-			if updated.Runtime.Name != container.Runtime.Name {
-				return fmt.Errorf("container.Runtime.Name field is immutable: %w", errdefs.ErrInvalidArgument)
-			}
-		}
-
-		// apply the field mask. If you update this code, you better follow the
-		// field mask rules in field_mask.proto. If you don't know what this
-		// is, do not update this code.
-		for _, path := range fieldpaths {
-			if strings.HasPrefix(path, "labels.") {
-				if updated.Labels == nil {
-					updated.Labels = map[string]string{}
-				}
-				key := strings.TrimPrefix(path, "labels.")
-				updated.Labels[key] = container.Labels[key]
-				continue
-			}
-
-			if strings.HasPrefix(path, "extensions.") {
-				if updated.Extensions == nil {
-					updated.Extensions = map[string]typeurl.Any{}
-				}
-				key := strings.TrimPrefix(path, "extensions.")
-				updated.Extensions[key] = container.Extensions[key]
-				continue
-			}
-
-			switch path {
-			case "labels":
-				updated.Labels = container.Labels
-			case "spec":
-				updated.Spec = container.Spec
-			case "extensions":
-				updated.Extensions = container.Extensions
-			case "image":
-				updated.Image = container.Image
-			case "snapshotkey":
-				updated.SnapshotKey = container.SnapshotKey
-			default:
-				return fmt.Errorf("cannot update %q field on %q: %w", path, container.ID, errdefs.ErrInvalidArgument)
-			}
-		}
-
-		if err := validateContainer(&updated); err != nil {
-			return fmt.Errorf("update failed validation: %w", err)
-		}
-
-		updated.CreatedAt = createdat
-		updated.UpdatedAt = time.Now().UTC()
-		if err := writeContainer(cbkt, &updated); err != nil {
-			return fmt.Errorf("failed to write container %q: %w", container.ID, err)
-		}
-
-		return nil
-	}); err != nil {
-		return containers.Container{}, err
-	}
-
-	return updated, nil
-}
-
-func (s *containerStore) Delete(ctx context.Context, id string) error {
+func (s *precontainerStore) Delete(ctx context.Context, function string) error {
+	id := function
 	namespace, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return err
@@ -281,7 +150,7 @@ func (s *containerStore) Delete(ctx context.Context, id string) error {
 	})
 }
 
-func validateContainer(container *containers.Container) error {
+func validatePrecontainer(container *containers.Container) error {
 	if err := identifiers.Validate(container.ID); err != nil {
 		return fmt.Errorf("container.ID: %w", err)
 	}
@@ -314,7 +183,7 @@ func validateContainer(container *containers.Container) error {
 	return nil
 }
 
-func readContainer(container *containers.Container, bkt *bolt.Bucket) error {
+func readPrecontainer(container *containers.Container, bkt *bolt.Bucket) error {
 	labels, err := boltutil.ReadLabels(bkt)
 	if err != nil {
 		return err
@@ -370,7 +239,7 @@ func readContainer(container *containers.Container, bkt *bolt.Bucket) error {
 	})
 }
 
-func writeContainer(bkt *bolt.Bucket, container *containers.Container) error {
+func writePrecontainer(bkt *bolt.Bucket, container *containers.Container) error {
 	if err := boltutil.WriteTimestamps(bkt, container.CreatedAt, container.UpdatedAt); err != nil {
 		return err
 	}
@@ -419,37 +288,36 @@ func writeContainer(bkt *bolt.Bucket, container *containers.Container) error {
 	return boltutil.WriteLabels(bkt, container.Labels)
 }
 
-func (s *containerStore) preloadUpdate(ctx context.Context, container containers.Container) (containers.Container, error) {
-	namespace, err := namespaces.NamespaceRequired(ctx)
-	if err != nil {
-		return containers.Container{}, err
-	}
+func (s *precontainerStore) preload(container containers.Container) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-	if container.ID == "" {
-		return containers.Container{}, fmt.Errorf("must specify a container id: %w", errdefs.ErrInvalidArgument)
+	name := container.Labels["func-name"]
+	if precontainerset, ok := s.cache[name]; ok {
+		precontainerset = append(precontainerset, container.ID)
+		s.cache[name] = precontainerset
+	} else {
+		precontainerset := make([]string, 0)
+		precontainerset = append(precontainerset, container.ID)
+		s.cache[name] = precontainerset
 	}
+	return true
+}
 
-	if err := update(ctx, s.db, func(tx *bolt.Tx) error {
-		bkt := getContainersBucket(tx, namespace)
-		if bkt == nil {
-			return fmt.Errorf("cannot update container %q in namespace %q: %w", container.ID, namespace, errdefs.ErrNotFound)
+func (s *precontainerStore) getByFuncName(function string) string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if precontainerset, ok := s.cache[function]; ok {
+		if len(precontainerset) == 0 {
+			return ""
 		}
 
-		cbkt := bkt.Bucket([]byte(container.ID))
-		if cbkt == nil {
-			return fmt.Errorf("container %q: %w", container.ID, errdefs.ErrNotFound)
-		}
-		container.CreatedAt = time.Now().UTC()
-		container.UpdatedAt = container.CreatedAt
-
-		if err := boltutil.WriteTimestamps(bkt, container.CreatedAt, container.UpdatedAt); err != nil {
-			return err
-		}
-
-		return nil
-	}); err != nil {
-		return containers.Container{}, err
+		ret := precontainerset[0]
+		precontainerset = precontainerset[1:]
+		s.cache[function] = precontainerset
+		return ret
 	}
 
-	return container, nil
+	return ""
 }

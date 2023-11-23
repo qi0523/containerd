@@ -32,6 +32,7 @@ import (
 	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/precontainers"
 	"github.com/containerd/containerd/sandbox"
 	srv "github.com/containerd/containerd/services"
 	"github.com/containerd/containerd/services/introspection"
@@ -44,6 +45,7 @@ type services struct {
 	imageStore           images.Store
 	tmpimageStore        tmpimages.Store
 	containerStore       containers.Store
+	precontainerStore    precontainers.Store
 	namespaceStore       namespaces.Store
 	snapshotters         map[string]snapshots.Snapshotter
 	taskService          tasks.TasksClient

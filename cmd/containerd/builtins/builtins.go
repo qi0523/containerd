@@ -40,6 +40,7 @@ import (
 	_ "github.com/containerd/containerd/services/tasks"
 
 	// TODO#
+	_ "github.com/containerd/containerd/services/precontainers"
 	_ "github.com/containerd/containerd/services/tmpimages"
 	_ "github.com/containerd/containerd/services/version"
 )

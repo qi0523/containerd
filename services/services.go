@@ -27,6 +27,8 @@ const (
 	TmpImagesService = "tmpimages-service"
 	// ContainersService is id of containers service.
 	ContainersService = "containers-service"
+	// PrecontainersService
+	PrecontainersService = "precontainers-service"
 	// TasksService is id of tasks service.
 	TasksService = "tasks-service"
 	// NamespacesService is id of namespaces service.

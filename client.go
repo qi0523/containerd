@@ -35,6 +35,7 @@ import (
 	introspectionapi "github.com/containerd/containerd/api/services/introspection/v1"
 	leasesapi "github.com/containerd/containerd/api/services/leases/v1"
 	namespacesapi "github.com/containerd/containerd/api/services/namespaces/v1"
+	precontainersapi "github.com/containerd/containerd/api/services/precontainers/v1"
 	sandboxsapi "github.com/containerd/containerd/api/services/sandbox/v1"
 	snapshotsapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/api/services/tasks/v1"
@@ -54,6 +55,7 @@ import (
 	"github.com/containerd/containerd/pkg/dialer"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/precontainers"
 	ptypes "github.com/containerd/containerd/protobuf/types"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
@@ -291,6 +293,36 @@ func (c *Client) NewContainer(ctx context.Context, id string, opts ...NewContain
 		}
 	}
 	r, err := c.ContainerService().Create(ctx, container)
+	if err != nil {
+		return nil, err
+	}
+	return containerFromRecord(c, r), nil
+}
+
+// NewContainer will create a new container with the provided id.
+// The id must be unique within the namespace.
+func (c *Client) NewPreContainer(ctx context.Context, id string, function string, opts ...NewContainerOpts) (Container, error) {
+	ctx, done, err := c.WithLease(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done(ctx)
+
+	container := containers.Container{
+		ID: id,
+		Runtime: containers.RuntimeInfo{
+			Name: c.runtime,
+		},
+	}
+	for _, o := range opts {
+		if err := o(ctx, c, &container); err != nil {
+			return nil, err
+		}
+	}
+	
+	container.Labels["func-name"] = function
+	r, err := c.PrecontainerService().Preload(ctx, container)
+	// r, err := c.ContainerService().Create(ctx, container)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +692,15 @@ func (c *Client) TmpImageService() tmpimages.Store {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	return NewTmpImageStoreFromClient(tmpimagesapi.NewTmpImagesClient(c.conn))
+}
+
+func (c *Client) PrecontainerService() precontainers.Store {
+	if c.precontainerStore != nil {
+		return c.precontainerStore
+	}
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return NewRemotePrecontainerStore(precontainersapi.NewPrecontainersClient(c.conn))
 }
 
 // GetTmpImage returns an existing tmpimage

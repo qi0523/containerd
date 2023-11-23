@@ -119,7 +119,14 @@ func (l *local) Create(ctx context.Context, req *api.CreateContainerRequest, _ .
 	if err := l.withStoreUpdate(ctx, func(ctx context.Context) error {
 		container := containerFromProto(req.Container)
 
-		created, err := l.Store.Create(ctx, container)
+		var created containers.Container
+		var err error
+		if _, ok := container.Labels["func-name"]; ok {
+			created, err = l.Store.Update(ctx, container)
+		} else {
+			created, err = l.Store.Create(ctx, container)
+		}
+		
 		if err != nil {
 			return err
 		}
