@@ -329,6 +329,14 @@ func (c *Client) NewPreContainer(ctx context.Context, id string, function string
 	return containerFromRecord(c, r), nil
 }
 
+func (c *Client) GetPreloadContainer(ctx context.Context, function string) (Container, error) {
+	r, err := c.PrecontainerService().Get(ctx, function)
+	if err != nil {
+		return nil, err
+	}
+	return containerFromRecord(c, r), nil
+}
+
 // LoadContainer loads an existing container from metadata
 func (c *Client) LoadContainer(ctx context.Context, id string) (Container, error) {
 	r, err := c.ContainerService().Get(ctx, id)
